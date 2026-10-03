@@ -1,0 +1,84 @@
+"""Phase 8 Organization Service.
+
+Coordinates the API boundary, database repository, and deterministic planner.
+"""
+
+from typing import Optional
+from app.database.repositories import OrganizationRepository, ScanRepository
+from app.database.connection import get_connection
+from app.organization.models import OrganizationPlan
+from app.organization.planner import OrganizationPlanner
+from app.services.folder_access import FolderAccessService
+from app.services.protected_paths import ProtectedPathService
+
+
+def generate_organization_plan(
+    scan_id: str,
+    folder_service: FolderAccessService,
+    objective: Optional[str] = None
+) -> OrganizationPlan:
+    """Generate and persist an organization plan for a scan."""
+    
+    # 1. Verify scan exists
+    with get_connection() as conn:
+        cursor = conn.execute("SELECT 1 FROM scans WHERE id = ?", (scan_id,))
+        if not cursor.fetchone():
+            raise ValueError(f"Scan ID '{scan_id}' not found.")
+            
+    # 2. Fetch required data (Files + Analysis joined)
+    # Using the existing method from Analysis repository (or we can write a custom one)
+    # The prompt advises avoiding N+1, so we do a single batch join.
+    # Analysis results include relative_path, name, category, etc.
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            SELECT f.*, a.*, 
+                   f.path as relative_path, 
+                   f.name as name
+            FROM files f
+            LEFT JOIN file_analysis a ON f.id = a.file_id
+            WHERE f.scan_id = ?
+            """,
+            (scan_id,)
+        )
+        files_data = [dict(row) for row in cursor.fetchall()]
+
+    if not files_data:
+        raise ValueError(f"No files found for scan '{scan_id}'.")
+
+    # 3. Setup services
+    protected_service = ProtectedPathService(folder_service)
+    planner = OrganizationPlanner(
+        folder_service=folder_service,
+        protected_paths_service=protected_service
+    )
+
+    # 4. Generate deterministic plan
+    plan = planner.generate_plan(
+        scan_id=scan_id,
+        files_data=files_data,
+        objective=objective
+    )
+
+    # 5. Persist the plan
+    op_dicts = [op.model_dump() for op in plan.operations]
+    OrganizationRepository.save_plan(
+        plan_id=plan.plan_id,
+        scan_id=plan.scan_id,
+        objective=plan.objective,
+        created_at=plan.created_at,
+        warnings=plan.warnings,
+        protected_conflicts=plan.protected_conflicts,
+        operations=op_dicts
+    )
+
+    return plan
+
+
+def retrieve_organization_plan(plan_id: str) -> Optional[OrganizationPlan]:
+    """Retrieve an existing persisted plan by ID."""
+    data = OrganizationRepository.get_plan(plan_id)
+    if not data:
+        return None
+        
+    return OrganizationPlan(**data)

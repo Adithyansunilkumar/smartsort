@@ -1,0 +1,1 @@
+"""SmartSort backend application package."""
