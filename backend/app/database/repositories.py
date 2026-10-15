@@ -332,8 +332,13 @@ class OrganizationRepository:
         new_folders_proposed: int = 0,
         existing_folders_reused: int = 0,
         unclassified_files: int = 0,
+        **kwargs,
     ) -> None:
-        """Persist a complete organization plan and its operations in one transaction."""
+        """Persist a complete organization plan and its operations in one transaction.
+
+        Extra keyword args forwarded from the plan model:
+            structure, rename, archive_days
+        """
         import json
         with get_connection() as conn:
             conn.execute(
@@ -341,8 +346,8 @@ class OrganizationRepository:
                 INSERT INTO organization_plans (
                     id, scan_id, objective, created_at, warnings, protected_conflicts,
                     detected_topics, new_folders_proposed, existing_folders_reused,
-                    unclassified_files
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    unclassified_files, structure, rename, archive_days
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     plan_id,
@@ -355,6 +360,9 @@ class OrganizationRepository:
                     new_folders_proposed,
                     existing_folders_reused,
                     unclassified_files,
+                    kwargs.get("structure"),
+                    1 if kwargs.get("rename") else 0,
+                    kwargs.get("archive_days"),
                 )
             )
 
@@ -370,6 +378,14 @@ class OrganizationRepository:
                         op.get("explanation"),
                         op.get("topic"),
                         op.get("folder_exists"),
+                        op.get("rule"),
+                        op.get("confidence_score"),
+                        json.dumps(op.get("flags") or []) if op.get("flags") is not None else None,
+                        op.get("date_source"),
+                        op.get("original_name"),
+                        op.get("duplicate_of"),
+                        1 if op.get("likely_newer") else None,
+                        1 if op.get("needs_review") else None,
                     )
                     for op in operations
                 ]
@@ -377,8 +393,10 @@ class OrganizationRepository:
                     """
                     INSERT INTO organization_operations (
                         plan_id, type, source, destination, reason, confidence,
-                        explanation, topic, folder_exists
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        explanation, topic, folder_exists,
+                        rule, confidence_score, flags, date_source,
+                        original_name, duplicate_of, likely_newer, needs_review
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     op_records
                 )
@@ -443,11 +461,39 @@ class OrganizationRepository:
             plan_dict["new_folders_proposed"] = plan_dict.get("new_folders_proposed") or 0
             plan_dict["existing_folders_reused"] = plan_dict.get("existing_folders_reused") or 0
             plan_dict["unclassified_files"] = plan_dict.get("unclassified_files") or 0
+            plan_dict["structure"] = plan_dict.get("structure")
+            plan_dict["rename"] = bool(plan_dict.get("rename"))
+            plan_dict["archive_days"] = plan_dict.get("archive_days")
 
             op_cursor = conn.execute(
                 "SELECT * FROM organization_operations WHERE plan_id = ?", (plan_id,)
             )
-            plan_dict["operations"] = [dict(row) for row in op_cursor.fetchall()]
+            ops = []
+            for row in op_cursor.fetchall():
+                op = dict(row)
+                # Deserialize flags (stored as JSON list or comma-string)
+                raw_flags = op.get("flags")
+                if raw_flags:
+                    try:
+                        parsed = json.loads(raw_flags)
+                        if isinstance(parsed, list):
+                            op["flags"] = ",".join(parsed) if parsed else None
+                        else:
+                            op["flags"] = raw_flags
+                    except Exception:
+                        op["flags"] = raw_flags  # keep as-is (already comma-string)
+                else:
+                    op["flags"] = None
+                # Coerce numeric fields
+                if op.get("confidence_score") is not None:
+                    try:
+                        op["confidence_score"] = float(op["confidence_score"])
+                    except (TypeError, ValueError):
+                        op["confidence_score"] = None
+                op["likely_newer"] = bool(op.get("likely_newer")) if op.get("likely_newer") else None
+                op["needs_review"] = bool(op.get("needs_review")) if op.get("needs_review") else None
+                ops.append(op)
+            plan_dict["operations"] = ops
 
             return plan_dict
 

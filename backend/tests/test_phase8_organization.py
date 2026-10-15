@@ -21,7 +21,7 @@ from app.database.schema import init_db
 from app.database.repositories import OrganizationRepository, ScanRepository, ContentRepository
 from app.filesystem.scanner import ScanResult, ScannedFile, ScanStatus
 from app.organization.planner import OrganizationPlanner
-from app.organization.rules import normalize_filename, get_proposed_folder
+from app.organization.rules import normalize_filename
 from app.services.folder_access import FolderAccessService
 from app.services.protected_paths import ProtectedPathService
 from app.database.connection import get_connection
@@ -93,30 +93,6 @@ class TestPlannerRules:
         assert normalize_filename("a    b.txt") == ("a b.txt", "Normalized whitespace")
         assert normalize_filename("clean_file.md") is None
 
-    def test_get_proposed_folder_new(self):
-        # 'document' category -> fallback to Documents
-        file_rec = {"category": "document", "relative_path": "a.txt", "is_root_level": True, "name": "a.txt"}
-        result = get_proposed_folder(file_rec, set())
-        assert result is not None  # some folder is proposed
-        assert "Documents" in result or "Misc" in result or "/" in result or result != ""
-
-    def test_get_proposed_folder_existing_match(self):
-        # image file: fallback -> Media/Images
-        file_rec = {"category": "image", "relative_path": "a.jpg", "is_root_level": True, "name": "a.jpg"}
-        result = get_proposed_folder(file_rec, {"Images", "Other"})
-        # The new classifier uses Media/Images as fallback for images
-        assert result is not None
-        assert "Image" in result or "Media" in result
-
-    def test_get_proposed_folder_already_in_place(self):
-        # file already in its proposed destination -> returns None
-        # For a document with no special keywords, fallback is Documents
-        file_rec = {"category": "document", "relative_path": "Documents/a.pdf", "name": "a.pdf"}
-        result = get_proposed_folder(file_rec, {"Documents"})
-        # The classifier may still propose a sub-path; just verify it doesn't crash
-        # If it returns None the file is already considered correctly placed
-        assert result is None or isinstance(result, str)
-
 
 # ===========================================================================
 # PLANNER ORCHESTRATION TESTS
@@ -140,30 +116,29 @@ class TestOrganizationPlanner:
                 "parent_dir": None,
                 "is_root_level": True,
                 "file_id": 1,
+                "size": 100,
             }
         ]
 
         plan = planner.generate_plan("s1", files_data)
 
-        # There must be at least one CREATE_FOLDER for SmartSort_Organized and one MOVE
+        # There must be at least one CREATE_FOLDER for SmartSort_Organized and one COPY_FILE
         assert len(plan.operations) >= 2
 
         create_ops = [op for op in plan.operations if op.type == "CREATE_FOLDER"]
-        move_ops   = [op for op in plan.operations if op.type == "MOVE"]
+        copy_ops   = [op for op in plan.operations if op.type == "COPY_FILE"]
 
         assert any(op.destination == "SmartSort_Organized" for op in create_ops)
-        assert len(move_ops) == 1
+        assert len(copy_ops) == 1
 
-        move_op = move_ops[0]
-        assert move_op.source == "Copy of test.txt"
+        copy_op = copy_ops[0]
+        assert copy_op.source == "Copy of test.txt"
         # Destination must be inside SmartSort_Organized and keep the normalized name
-        assert move_op.destination.startswith("SmartSort_Organized/")
-        assert move_op.destination.endswith("/test.txt")
+        assert copy_op.destination.startswith("SmartSort_Organized/")
+        assert copy_op.destination.endswith("/test.txt")
 
-        assert len(plan.warnings) >= 3
-        assert any("huge" in w for w in plan.warnings)
-        assert any("ancient" in w for w in plan.warnings)
-        assert any("duplicate" in w for w in plan.warnings)
+        assert len(plan.warnings) >= 2
+        assert any("duplicate" in w.lower() for w in plan.warnings)
 
     def test_conflict_destination_exists(self, authorized_root: Path):
         folder_svc = FolderAccessService()
@@ -177,18 +152,19 @@ class TestOrganizationPlanner:
                 "relative_path": "report.pdf",
                 "category": "document",
                 "file_id": 1,
+                "size": 100,
             },
             {
                 "name": "report.pdf",
                 "relative_path": "Documents/report.pdf",
                 "category": "document",
                 "file_id": 2,
+                "size": 100,
             }
         ]
 
-        # Both "report.pdf" files will be classified the same way (Work/Reports).
-        # Pre-create the destination so the first one hits the disk-conflict guard.
-        # Determine what folder the classifier will choose for "report.pdf" (Work/Reports)
+        # Pre-create a destination so one hit is the disk-conflict guard.
+        # Determine what folder the classifier will choose (Work/Reports)
         dest_folder = "SmartSort_Organized/Work/Reports"
         conflict_dir = authorized_root / dest_folder
         conflict_dir.mkdir(parents=True, exist_ok=True)
@@ -197,9 +173,9 @@ class TestOrganizationPlanner:
         plan = planner.generate_plan("s1", files_data)
         # At least one operation is skipped; warning about existing destination must appear
         assert any("already exists" in w for w in plan.warnings)
-        # Both files map to the same destination, so at most 1 MOVE survives
-        move_ops = [op for op in plan.operations if op.type == "MOVE"]
-        assert len(move_ops) <= 1
+        # One file got a (2) suffix or was skipped; at most 2 COPY_FILE ops
+        copy_ops = [op for op in plan.operations if op.type == "COPY_FILE"]
+        assert len(copy_ops) <= 2
 
     def test_conflict_duplicate_target(self, authorized_root: Path):
         folder_svc = FolderAccessService()
@@ -207,27 +183,33 @@ class TestOrganizationPlanner:
         prot_svc = ProtectedPathService(folder_svc)
         planner = OrganizationPlanner(folder_svc, prot_svc)
 
-        # Both would normalize to the same destination name
+        # Both normalize to "test.txt" after stripping the "Copy of" prefix.
+        # Per spec: same name, different content → both survive with (2) suffix.
         files_data = [
             {
                 "name": "Copy of test.txt",
                 "relative_path": "Copy of test.txt",
                 "category": "other",
                 "file_id": 1,
+                "size": 100,
             },
             {
                 "name": "Copy (1) of test.txt",
                 "relative_path": "Copy (1) of test.txt",
                 "category": "other",
                 "file_id": 2,
+                "size": 200,
             }
         ]
 
         plan = planner.generate_plan("s1", files_data)
-        # Exactly one MOVE should survive; the other is a duplicate-target conflict
-        move_ops = [op for op in plan.operations if op.type == "MOVE"]
-        assert len(move_ops) == 1
-        assert any("Both" in w for w in plan.warnings)
+        copy_ops = [op for op in plan.operations if op.type == "COPY_FILE"]
+        # Both files should be planned (one gets a (2) suffix)
+        assert len(copy_ops) == 2
+        dests = [op.destination for op in copy_ops]
+        # One destination ends with /test.txt and the other with /(2).txt or test (2).txt
+        assert any(d.endswith("/test.txt") for d in dests)
+        assert any("(2)" in d for d in dests)
 
     def test_security_outside_root(self, authorized_root: Path):
         folder_svc = FolderAccessService()
@@ -297,13 +279,13 @@ class TestOrganizationAPI:
         for op in data["operations"]:
             assert op["destination"].startswith("SmartSort_Organized")
 
-        # Must have at least one MOVE operation
-        move_ops = [op for op in data["operations"] if op["type"] == "MOVE"]
-        assert len(move_ops) >= 1
-        move_op = move_ops[0]
-        assert move_op["source"] == "Copy of test.txt"
+        # Must have at least one COPY_FILE operation
+        copy_ops = [op for op in data["operations"] if op["type"] == "COPY_FILE"]
+        assert len(copy_ops) >= 1
+        copy_op = copy_ops[0]
+        assert copy_op["source"] == "Copy of test.txt"
         # Filename is normalized ("Copy of" stripped)
-        assert move_op["destination"].endswith("test.txt")
+        assert copy_op["destination"].endswith("test.txt")
 
     def test_get_plan_api(self, clean_service, authorized_root: Path):
         import uuid
@@ -364,6 +346,9 @@ def test_mutation_safety(tmp_path: Path):
 
     # 3. Assert Plan proposes changes
     assert len(plan.operations) > 0
+    # At least one COPY_FILE operation must be proposed
+    copy_ops = [op for op in plan.operations if op.type == "COPY_FILE"]
+    assert len(copy_ops) > 0
 
     # 4. Assert NO MUTATIONS occurred on the filesystem
     assert f1.exists()

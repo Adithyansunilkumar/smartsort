@@ -15,25 +15,25 @@ from app.services.protected_paths import ProtectedPathService
 def generate_organization_plan(
     scan_id: str,
     folder_service: FolderAccessService,
-    objective: Optional[str] = None
+    objective: Optional[str] = None,
+    structure: Optional[str] = None,
+    rename: bool = False,
+    archive_days: Optional[int] = None,
 ) -> OrganizationPlan:
     """Generate and persist an organization plan for a scan."""
-    
+
     # 1. Verify scan exists
     with get_connection() as conn:
         cursor = conn.execute("SELECT 1 FROM scans WHERE id = ?", (scan_id,))
         if not cursor.fetchone():
             raise ValueError(f"Scan ID '{scan_id}' not found.")
-            
+
     # 2. Fetch required data (Files + Analysis joined)
-    # Using the existing method from Analysis repository (or we can write a custom one)
-    # The prompt advises avoiding N+1, so we do a single batch join.
-    # Analysis results include relative_path, name, category, etc.
     with get_connection() as conn:
         cursor = conn.execute(
             """
-            SELECT f.*, a.*, 
-                   f.path as relative_path, 
+            SELECT f.*, a.*,
+                   f.path as relative_path,
                    f.name as name
             FROM files f
             LEFT JOIN file_analysis a ON f.id = a.file_id
@@ -51,8 +51,8 @@ def generate_organization_plan(
             with get_connection() as conn:
                 cursor = conn.execute(
                     """
-                    SELECT f.*, a.*, 
-                           f.path as relative_path, 
+                    SELECT f.*, a.*,
+                           f.path as relative_path,
                            f.name as name
                     FROM files f
                     LEFT JOIN file_analysis a ON f.id = a.file_id
@@ -75,7 +75,10 @@ def generate_organization_plan(
     plan = planner.generate_plan(
         scan_id=scan_id,
         files_data=files_data,
-        objective=objective
+        objective=objective,
+        structure=structure,
+        rename=rename,
+        archive_days=archive_days,
     )
 
     # 5. Persist the plan
@@ -92,6 +95,9 @@ def generate_organization_plan(
         new_folders_proposed=plan.new_folders_proposed,
         existing_folders_reused=plan.existing_folders_reused,
         unclassified_files=plan.unclassified_files,
+        structure=plan.structure,
+        rename=plan.rename,
+        archive_days=plan.archive_days,
     )
 
     return plan

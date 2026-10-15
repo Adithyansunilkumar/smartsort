@@ -200,12 +200,43 @@ def init_db(db_path: Optional[Path] = None) -> None:
                 except sqlite3.OperationalError:
                     pass  # Column already exists
 
+            # Human-rules migrations: new columns on organization_operations
+            for _col, _default in [
+                ("rule", "NULL"),
+                ("confidence_score", "NULL"),
+                ("flags", "NULL"),
+                ("date_source", "NULL"),
+                ("original_name", "NULL"),
+                ("duplicate_of", "NULL"),
+                ("likely_newer", "NULL"),
+                ("needs_review", "NULL"),
+            ]:
+                try:
+                    conn.execute(
+                        f"ALTER TABLE organization_operations ADD COLUMN {_col} TEXT DEFAULT {_default}"
+                    )
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
+
             # Migrations for Phase 8 organization_plans (summary fields)
             for _col, _default in [
                 ("detected_topics", "'{}'"),
                 ("new_folders_proposed", "0"),
                 ("existing_folders_reused", "0"),
                 ("unclassified_files", "0"),
+            ]:
+                try:
+                    conn.execute(
+                        f"ALTER TABLE organization_plans ADD COLUMN {_col} TEXT DEFAULT {_default}"
+                    )
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
+
+            # Human-rules migrations: new columns on organization_plans
+            for _col, _default in [
+                ("structure", "NULL"),
+                ("rename", "0"),
+                ("archive_days", "NULL"),
             ]:
                 try:
                     conn.execute(

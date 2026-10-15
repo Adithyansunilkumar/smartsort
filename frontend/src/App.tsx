@@ -67,7 +67,7 @@ export default function App() {
   const [isBulkRejecting, setIsBulkRejecting] = useState(false);
   const [showRejectAllConfirm, setShowRejectAllConfirm] = useState(false);
   const [showOpsDetail, setShowOpsDetail] = useState(true);
-  const [approvalFilter, setApprovalFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
+  const [approvalFilter, setApprovalFilter] = useState<'all' | 'pending' | 'approved' | 'rejected' | 'needs_review'>('all');
   const [approvalSearchQuery, setApprovalSearchQuery] = useState<string>('');
 
   // ── Execution state ────────────────────────────────────────────────────────
@@ -131,7 +131,7 @@ export default function App() {
   };
 
   const opTypeLabel = (type: string) => {
-    if (type === 'MOVE') return 'Move / Copy';
+    if (type === 'MOVE' || type === 'COPY_FILE') return 'Copy / Organize';
     if (type === 'RENAME') return 'Rename';
     if (type === 'CREATE_FOLDER') return 'Create folder';
     return type;
@@ -365,6 +365,10 @@ export default function App() {
   const pendingCount = approvalStatus?.pending_count ?? 0;
   const approvedCount = approvalStatus?.approved_count ?? 0;
   const rejectedCount = approvalStatus?.rejected_count ?? 0;
+  const needsReviewCount = useMemo(() => {
+    if (!approvalStatus) return 0;
+    return approvalStatus.operations.filter(op => op.needs_review).length;
+  }, [approvalStatus]);
   const totalOps = approvalStatus?.total_operations ?? organizationPlan?.operations.length ?? 0;
 
   const filteredApprovalOps = useMemo(() => {
@@ -377,13 +381,15 @@ export default function App() {
       if (approvalFilter === 'approved' && !isApproved) return false;
       if (approvalFilter === 'rejected' && !isRejected) return false;
       if (approvalFilter === 'pending' && !isPending) return false;
+      if (approvalFilter === 'needs_review' && !op.needs_review) return false;
 
       if (approvalSearchQuery.trim()) {
         const q = approvalSearchQuery.toLowerCase();
         const sourceMatch = op.source.toLowerCase().includes(q);
         const destMatch = op.destination.toLowerCase().includes(q);
         const reasonMatch = op.reason ? op.reason.toLowerCase().includes(q) : false;
-        if (!sourceMatch && !destMatch && !reasonMatch) return false;
+        const flagsMatch = op.flags ? op.flags.toLowerCase().includes(q) : false;
+        if (!sourceMatch && !destMatch && !reasonMatch && !flagsMatch) return false;
       }
 
       return true;
@@ -1275,6 +1281,13 @@ export default function App() {
                         >
                           ✕ Rejected ({rejectedCount})
                         </button>
+                        <button
+                          type="button"
+                          className={`ops-filter-tab tab-needs-review ${approvalFilter === 'needs_review' ? 'active' : ''}`}
+                          onClick={() => setApprovalFilter('needs_review')}
+                        >
+                          ⚠ Needs Review ({needsReviewCount})
+                        </button>
                       </div>
 
                       <div className="ops-filter-search">
@@ -1329,7 +1342,7 @@ export default function App() {
                             >
                               <div className="op-icon">
                                 {isFolder ? '📁' :
-                                 op.type === 'MOVE' ? '→' : '✏️'}
+                                 (op.type === 'MOVE' || op.type === 'COPY_FILE') ? '→' : '✏️'}
                               </div>
                               <div className="op-body">
                                 <div className="op-paths">
@@ -1344,6 +1357,23 @@ export default function App() {
                                 {op.reason && (
                                   <div className="op-reason">{op.reason}</div>
                                 )}
+                                <div className="op-meta-row" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', marginTop: '0.25rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                  {op.confidence && (
+                                    <span className="badge-confidence" style={{ fontWeight: 600 }}>
+                                      Confidence: {op.confidence}{op.confidence_score !== undefined && op.confidence_score !== null ? ` (${Math.round(op.confidence_score * 100)}%)` : ''}
+                                    </span>
+                                  )}
+                                  {op.flags && (
+                                    <span className="badge-flags" style={{ background: 'rgba(234, 179, 8, 0.15)', color: '#ca8a04', padding: '0.1rem 0.4rem', borderRadius: '4px' }}>
+                                      flags: {op.flags}
+                                    </span>
+                                  )}
+                                  {op.likely_newer && (
+                                    <span className="badge-newer" style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#2563eb', padding: '0.1rem 0.4rem', borderRadius: '4px' }}>
+                                      likely newer
+                                    </span>
+                                  )}
+                                </div>
                                 {!op.is_eligible && op.ineligibility_reason && (
                                   <div className="op-ineligible">⚠ {op.ineligibility_reason}</div>
                                 )}

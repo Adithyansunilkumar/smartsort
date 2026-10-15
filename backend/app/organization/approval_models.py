@@ -57,7 +57,7 @@ class OperationWithApproval(BaseModel):
     # Core operation fields (from organization_operations)
     operation_id: int = Field(..., description="Stable operation DB id")
     plan_id: str = Field(..., description="Parent plan ID")
-    type: str = Field(..., description="MOVE | RENAME | CREATE_FOLDER")
+    type: str = Field(..., description="MOVE | RENAME | CREATE_FOLDER | COPY_FILE")
     source: str = Field(..., description="Source relative path")
     destination: str = Field(..., description="Destination relative path")
     reason: Optional[str] = Field(None, description="Human-readable reason")
@@ -83,6 +83,14 @@ class OperationWithApproval(BaseModel):
         None,
         description="Human-readable explanation when is_eligible is False",
     )
+
+    # Human-thinking metadata
+    confidence_score: Optional[float] = Field(None, description="Numeric confidence score 0.0-1.0")
+    flags: Optional[str] = Field(None, description="Comma-separated flags")
+    rule: Optional[str] = Field(None, description="Rule identifier")
+    needs_review: Optional[bool] = Field(None, description="Whether operation requires human review")
+    likely_newer: Optional[bool] = Field(None, description="Whether file looks like a newer version")
+    original_name: Optional[str] = Field(None, description="Original filename before rename")
 
 
 class PlanApprovalStatus(BaseModel):

@@ -92,6 +92,24 @@ def _perform_verification(op_detail: Dict[str, Any], folder_service: FolderAcces
         if not dest_path.exists():
             raise VerificationError(VerificationStatus.FAILED, "Destination path does not exist.")
 
+    elif op_type == "COPY_FILE":
+        if not source_str:
+            raise VerificationError(VerificationStatus.INCONCLUSIVE, "No source path provided.")
+
+        try:
+            source_path = folder_service.validate_path_in_root(source_str, allow_nonexistent=True)
+        except (PathSecurityError, PathValidationError) as e:
+            raise VerificationError(VerificationStatus.INCONCLUSIVE, f"Source validation failed: {str(e)}")
+
+        if prot_svc.is_protected(source_str):
+            raise VerificationError(VerificationStatus.INCONCLUSIVE, "Source is a protected path.")
+
+        if not source_path.exists():
+            raise VerificationError(VerificationStatus.FAILED, "Source path does not exist.")
+
+        if not dest_path.exists():
+            raise VerificationError(VerificationStatus.FAILED, "Destination path does not exist.")
+
     elif op_type == "CREATE_FOLDER":
         if not dest_path.exists():
             raise VerificationError(VerificationStatus.FAILED, "Destination folder does not exist.")

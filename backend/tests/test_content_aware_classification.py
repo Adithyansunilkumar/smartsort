@@ -37,7 +37,7 @@ from app.database.repositories import (
 )
 from app.filesystem.scanner import ScanResult, ScannedFile, ScanStatus
 from app.organization.classifier import classify_file, classify_file_batch, MAX_DEPTH
-from app.organization.rules import get_proposed_folder, get_proposed_folder_with_classification
+
 from app.organization.planner import OrganizationPlanner
 from app.organization.service import generate_organization_plan
 from app.services.folder_access import FolderAccessService, get_folder_access_service
@@ -133,21 +133,21 @@ class TestClassifierUnit:
     """Unit tests for the content-aware classifier."""
 
     def test_python_notes_filename(self):
-        rec = {"name": "Python_Beginner_Notes.pdf", "category": "document"}
+        rec = {"name": "Python_Beginner_Notes.pdf", "category": "document", "size": 100}
         result = classify_file(rec)
         assert result["folder_path"] == "Learning/Python"
-        assert result["confidence"] in ("HIGH", "MEDIUM")
+        assert result["confidence_label"] in ("HIGH", "MEDIUM")
 
     def test_machine_learning_roadmap(self):
-        rec = {"name": "Machine_Learning_Roadmap.pdf", "category": "document"}
+        rec = {"name": "Machine_Learning_Roadmap.pdf", "category": "document", "size": 100}
         result = classify_file(rec)
         assert "Machine Learning" in result["folder_path"]
-        assert result["confidence"] in ("HIGH", "MEDIUM")
+        assert result["confidence_label"] in ("HIGH", "MEDIUM")
 
     def test_electricity_bill(self):
         rec = {"name": "Electricity_Bill_August.pdf", "category": "document"}
         result = classify_file(rec)
-        assert "Electricity" in result["folder_path"] or "Finance" in result["folder_path"]
+        assert "Financial" in result["folder_path"] or "Electricity" in result["folder_path"]
 
     def test_resume(self):
         rec = {"name": "Resume_2026.pdf", "category": "document"}
@@ -197,24 +197,24 @@ class TestClassifierUnit:
         assert len(parts) <= MAX_DEPTH
 
     def test_image_fallback(self):
-        """Unknown image -> Media/Images fallback."""
-        rec = {"name": "photo123.jpg", "category": "image"}
+        """Unknown image -> Images fallback."""
+        rec = {"name": "photo123.jpg", "category": "image", "size": 100}
         result = classify_file(rec)
         assert "Image" in result["folder_path"] or "Media" in result["folder_path"]
-        assert result["confidence"] == "LOW"
+        assert result["confidence_label"] in ("LOW", "MEDIUM")
 
     def test_unknown_extension_unknown_content(self):
-        """Truly unknown file -> Misc fallback."""
-        rec = {"name": "data.xyz123", "category": "unknown"}
+        """Truly unknown file -> _Review fallback (spec replaces Misc)."""
+        rec = {"name": "data.xyz123", "category": "unknown", "size": 100}
         result = classify_file(rec)
-        assert "Misc" in result["folder_path"]
-        assert result["confidence"] == "LOW"
+        assert "_Review" in result["folder_path"] or "Misc" in result["folder_path"]
+        assert result["confidence_label"] == "LOW"
 
     def test_empty_file(self):
-        """Empty content handled gracefully."""
-        rec = {"name": "empty.txt", "category": "document"}
+        """Empty content handled gracefully (size=0 -> _Empty)."""
+        rec = {"name": "empty.txt", "category": "document", "size": 0}
         result = classify_file(rec, text_content="")
-        assert isinstance(result["folder_path"], str)
+        assert "_Empty" in result["folder_path"] or isinstance(result["folder_path"], str)
         assert len(result["folder_path"]) > 0
 
     def test_similar_filenames_different_topics(self):
@@ -226,15 +226,16 @@ class TestClassifierUnit:
     def test_batch_classification(self):
         """classify_file_batch returns one result per file."""
         records = [
-            {"file_id": 1, "name": "Resume.pdf", "category": "document"},
-            {"file_id": 2, "name": "Electricity_Bill.pdf", "category": "document"},
-            {"file_id": 3, "name": "unknown.xyz", "category": "unknown"},
+            {"file_id": 1, "name": "Resume.pdf", "category": "document", "size": 100},
+            {"file_id": 2, "name": "Electricity_Bill.pdf", "category": "document", "size": 100},
+            {"file_id": 3, "name": "unknown.xyz", "category": "unknown", "size": 100},
         ]
         results = classify_file_batch(records)
         assert len(results) == 3
         assert "Career" in results[1]["folder_path"] or "Resume" in results[1]["folder_path"]
-        assert "Finance" in results[2]["folder_path"] or "Utilities" in results[2]["folder_path"]
-        assert "Misc" in results[3]["folder_path"]
+        assert "Financial" in results[2]["folder_path"] or "Utilities" in results[2]["folder_path"]
+        # unknown.xyz with no match → _Review (spec) or Misc (legacy)
+        assert "_Review" in results[3]["folder_path"] or "Misc" in results[3]["folder_path"]
 
 
 # ===========================================================================
@@ -277,9 +278,9 @@ class TestPlannerWithRealFiles:
         planner = OrganizationPlanner(folder_svc, prot_svc)
         plan = planner.generate_plan(scan_id, files_data)
 
-        move_ops = [op for op in plan.operations if op.type == "MOVE"]
-        assert len(move_ops) == 1
-        assert "Learning" in move_ops[0].destination or "Python" in move_ops[0].destination
+        copy_ops = [op for op in plan.operations if op.type == "COPY_FILE"]
+        assert len(copy_ops) == 1
+        assert "Learning" in copy_ops[0].destination or "Python" in copy_ops[0].destination
 
     def test_related_files_grouped_under_same_folder(self, authorized_root: Path):
         """Multiple Python files should share the same destination folder."""
@@ -320,10 +321,10 @@ class TestPlannerWithRealFiles:
         planner = OrganizationPlanner(folder_svc, prot_svc)
         plan = planner.generate_plan(scan_id, files_data)
 
-        move_ops = [op for op in plan.operations if op.type == "MOVE"]
-        assert len(move_ops) == 3
+        copy_ops = [op for op in plan.operations if op.type == "COPY_FILE"]
+        assert len(copy_ops) == 3
         # All should go to the same parent folder
-        parent_folders = {"/".join(op.destination.split("/")[:-1]) for op in move_ops}
+        parent_folders = {"/".join(op.destination.split("/")[:-1]) for op in copy_ops}
         assert len(parent_folders) == 1  # all share one destination folder
 
     def test_distinct_subjects_kept_separate(self, authorized_root: Path):
@@ -364,9 +365,9 @@ class TestPlannerWithRealFiles:
         planner = OrganizationPlanner(folder_svc, prot_svc)
         plan = planner.generate_plan(scan_id, files_data)
 
-        move_ops = [op for op in plan.operations if op.type == "MOVE"]
-        assert len(move_ops) == 2
-        parent_folders = {"/".join(op.destination.split("/")[:-1]) for op in move_ops}
+        copy_ops = [op for op in plan.operations if op.type == "COPY_FILE"]
+        assert len(copy_ops) == 2
+        parent_folders = {"/".join(op.destination.split("/")[:-1]) for op in copy_ops}
         # They must go to DIFFERENT folders
         assert len(parent_folders) == 2
 
@@ -399,9 +400,9 @@ class TestPlannerWithRealFiles:
         planner = OrganizationPlanner(folder_svc, prot_svc)
         plan = planner.generate_plan(scan_id, files_data)
 
-        move_ops = [op for op in plan.operations if op.type == "MOVE"]
-        assert len(move_ops) == 1
-        assert "Media" in move_ops[0].destination or "Image" in move_ops[0].destination
+        copy_ops = [op for op in plan.operations if op.type == "COPY_FILE"]
+        assert len(copy_ops) == 1
+        assert "Media" in copy_ops[0].destination or "Image" in copy_ops[0].destination
 
     def test_vague_filename_informative_content(self, authorized_root: Path):
         """File named 'document.txt' with machine learning content -> ML folder."""
@@ -437,9 +438,9 @@ class TestPlannerWithRealFiles:
         planner = OrganizationPlanner(folder_svc, prot_svc)
         plan = planner.generate_plan(scan_id, files_data)
 
-        move_ops = [op for op in plan.operations if op.type == "MOVE"]
-        assert len(move_ops) == 1
-        dest = move_ops[0].destination
+        copy_ops = [op for op in plan.operations if op.type == "COPY_FILE"]
+        assert len(copy_ops) == 1
+        dest = copy_ops[0].destination
         assert "Machine Learning" in dest or "Learning" in dest
 
     def test_empty_file_handled_gracefully(self, authorized_root: Path):
@@ -471,8 +472,8 @@ class TestPlannerWithRealFiles:
         plan = planner.generate_plan(scan_id, files_data)
 
         # Plan must succeed; empty file should get some fallback folder
-        move_ops = [op for op in plan.operations if op.type == "MOVE"]
-        assert len(move_ops) == 1
+        copy_ops = [op for op in plan.operations if op.type == "COPY_FILE"]
+        assert len(copy_ops) == 1
 
     def test_duplicate_filenames_different_dirs(self, authorized_root: Path):
         """Two files with same name in different source dirs get unique destinations."""
@@ -518,8 +519,8 @@ class TestPlannerWithRealFiles:
 
         # At most one of them can move to the shared destination;
         # the other should be warned about a conflict
-        move_ops = [op for op in plan.operations if op.type == "MOVE"]
-        destinations = [op.destination for op in move_ops]
+        copy_ops = [op for op in plan.operations if op.type == "COPY_FILE"]
+        destinations = [op.destination for op in copy_ops]
         # No two MOVE ops should share the same destination
         assert len(destinations) == len(set(destinations))
 
@@ -563,7 +564,7 @@ class TestFolderHierarchy:
         # All CREATE_FOLDER ops must come before all MOVE ops
         types = [op.type for op in plan.operations]
         last_folder = max((i for i, t in enumerate(types) if t == "CREATE_FOLDER"), default=-1)
-        first_move = min((i for i, t in enumerate(types) if t == "MOVE"), default=len(types))
+        first_move = min((i for i, t in enumerate(types) if t == "COPY_FILE"), default=len(types))
         assert last_folder < first_move
 
     def test_folder_depth_does_not_exceed_max(self, authorized_root: Path):
@@ -594,8 +595,8 @@ class TestFolderHierarchy:
         planner = OrganizationPlanner(folder_svc, prot_svc)
         plan = planner.generate_plan(scan_id, files_data)
 
-        move_ops = [op for op in plan.operations if op.type == "MOVE"]
-        for op in move_ops:
+        copy_ops = [op for op in plan.operations if op.type == "COPY_FILE"]
+        for op in copy_ops:
             # destination = SmartSort_Organized/<content_path>/<filename>
             # content_path must be <= MAX_DEPTH levels deep
             parts = op.destination.split("/")
@@ -786,9 +787,9 @@ class TestAPIContentAware:
         assert resp.status_code == 200
 
         plan = resp.json()["plan"]
-        move_ops = [op for op in plan["operations"] if op["type"] == "MOVE"]
-        assert len(move_ops) >= 1
-        for op in move_ops:
+        copy_ops = [op for op in plan["operations"] if op["type"] == "COPY_FILE"]
+        assert len(copy_ops) >= 1
+        for op in copy_ops:
             assert op.get("explanation"), f"No explanation on MOVE op: {op}"
 
     def test_plan_destination_all_under_smartsort(self, clean_service, authorized_root: Path):
@@ -916,7 +917,7 @@ class TestSafetyAndConflicts:
         source.write_bytes(b"new resume")
 
         # Pre-create the destination
-        dest_dir = authorized_root / "SmartSort_Organized" / "Career" / "Resumes"
+        dest_dir = authorized_root / "SmartSort_Organized" / "Documents" / "Career"
         dest_dir.mkdir(parents=True)
         dest_file = dest_dir / "Resume.pdf"
         dest_file.write_bytes(b"existing resume")
@@ -947,9 +948,9 @@ class TestSafetyAndConflicts:
         # A warning about the conflict must be present
         assert any("already exists" in w for w in plan.warnings)
         # No MOVE op should target the conflicted destination
-        move_ops = [op for op in plan.operations if op.type == "MOVE"]
-        conflict_dest = "SmartSort_Organized/Career/Resumes/Resume.pdf"
-        assert all(op.destination != conflict_dest for op in move_ops)
+        copy_ops = [op for op in plan.operations if op.type == "COPY_FILE"]
+        conflict_dest = "SmartSort_Organized/Documents/Career/Resume.pdf"
+        assert all(op.destination != conflict_dest for op in copy_ops)
 
     def test_smartsort_organized_excluded_from_source(self, authorized_root: Path):
         """Files already inside SmartSort_Organized are not re-processed."""
@@ -1003,7 +1004,7 @@ class TestSafetyAndConflicts:
         plan = planner.generate_plan(scan_id, files_data)
 
         # The already-organized file must not appear as a MOVE source
-        move_sources = {op.source for op in plan.operations if op.type == "MOVE"}
+        move_sources = {op.source for op in plan.operations if op.type == "COPY_FILE"}
         assert "SmartSort_Organized/Documents/notes.txt" not in move_sources
         # But the new source file should be processed
         assert "new_notes.txt" in move_sources

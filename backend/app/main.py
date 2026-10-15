@@ -11,7 +11,7 @@ from app.api.duplicates import router as duplicates_router
 from app.api.extract import router as extract_router
 from app.api.analyze import router as analyze_router
 from app.api.search import router as search_router
-from app.api.organization import router as organization_router
+from app.api.organization import router as organization_router, alt_router as organization_alt_router
 from app.api.agent import router as agent_router
 from app.api.tools import router as tools_router
 from app.api.approval import router as approval_router
@@ -58,6 +58,7 @@ app.include_router(extract_router)
 app.include_router(analyze_router)
 app.include_router(search_router)
 app.include_router(organization_router)
+app.include_router(organization_alt_router)
 app.include_router(agent_router)
 app.include_router(tools_router)
 app.include_router(approval_router)

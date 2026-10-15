@@ -112,7 +112,8 @@ def _perform_execution(op_detail: Dict[str, Any], folder_service: FolderAccessSe
     if prot_svc.is_protected(dest_str):
         raise ExecutionError("PROTECTED_PATH", "Destination is a protected path.")
 
-    if op_type in ("MOVE", "RENAME"):
+    if op_type in ("MOVE", "RENAME", "COPY_FILE"):
+
         if not source_str:
             raise ExecutionError("INVALID_SOURCE", "No source path provided.")
         

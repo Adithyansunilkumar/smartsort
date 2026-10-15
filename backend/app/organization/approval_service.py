@@ -47,7 +47,7 @@ from app.services.folder_access import FolderAccessService
 from app.services.protected_paths import ProtectedPathService
 
 # Only these operation types are supported for approval decisions.
-SUPPORTED_TYPES: frozenset[str] = frozenset({"MOVE", "RENAME", "CREATE_FOLDER"})
+SUPPORTED_TYPES: frozenset[str] = frozenset({"MOVE", "RENAME", "CREATE_FOLDER", "COPY_FILE"})
 
 
 class ApprovalValidationError(Exception):
@@ -165,6 +165,12 @@ def _build_operation_with_approval(
     except ValueError:
         approval_decision = ApprovalDecision.PENDING
 
+    flags_val = op_row.get("flags")
+    if isinstance(flags_val, list):
+        flags_val = ",".join(str(f) for f in flags_val)
+    elif flags_val is not None and not isinstance(flags_val, str):
+        flags_val = str(flags_val)
+
     return OperationWithApproval(
         operation_id=operation_id,
         plan_id=op_row["plan_id"],
@@ -178,6 +184,12 @@ def _build_operation_with_approval(
         decided_at=op_row.get("decided_at"),
         is_eligible=is_eligible,
         ineligibility_reason=ineligibility_reason,
+        confidence_score=op_row.get("confidence_score"),
+        flags=flags_val,
+        rule=op_row.get("rule"),
+        needs_review=bool(op_row.get("needs_review")) if op_row.get("needs_review") is not None else None,
+        likely_newer=bool(op_row.get("likely_newer")) if op_row.get("likely_newer") is not None else None,
+        original_name=op_row.get("original_name"),
     )
 
 

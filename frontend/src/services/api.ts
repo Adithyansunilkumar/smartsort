@@ -767,6 +767,15 @@ export interface OrganizationOperation {
   destination: string;
   reason: string;
   confidence: string;
+  explanation?: string | null;
+  rule?: string | null;
+  confidence_score?: number | null;
+  flags?: string | null;
+  date_source?: string | null;
+  original_name?: string | null;
+  duplicate_of?: string | null;
+  likely_newer?: boolean | null;
+  needs_review?: boolean | null;
 }
 
 export interface OrganizationPlan {
@@ -778,6 +787,9 @@ export interface OrganizationPlan {
   warnings: string[];
   protected_conflicts: string[];
   summary: Record<string, number>;
+  structure?: string | null;
+  rename?: boolean;
+  archive_days?: number | null;
 }
 
 export interface OrganizationResponse {
@@ -793,13 +805,19 @@ export interface OrganizationOperationResult {
 
 export async function generateOrganizationPlan(
   scanId: string,
-  objective?: string
+  objective?: string,
+  options?: { structure?: string; rename?: boolean; archive_days?: number }
 ): Promise<OrganizationOperationResult> {
   try {
     const response = await fetch(`${API_BASE_URL}/api/organize/${scanId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ objective: objective || null }),
+      body: JSON.stringify({
+        objective: objective || null,
+        structure: options?.structure,
+        rename: options?.rename,
+        archive_days: options?.archive_days,
+      }),
     });
     const responseBody = await response.json().catch(() => null);
     if (!response.ok) {
@@ -964,6 +982,12 @@ export interface OperationWithApproval {
   decided_at: string | null;
   is_eligible: boolean;
   ineligibility_reason: string | null;
+  confidence_score?: number | null;
+  flags?: string | null;
+  rule?: string | null;
+  needs_review?: boolean | null;
+  likely_newer?: boolean | null;
+  original_name?: string | null;
 }
 
 export interface PlanApprovalStatus {
