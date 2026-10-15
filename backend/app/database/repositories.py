@@ -327,7 +327,11 @@ class OrganizationRepository:
         created_at: str,
         warnings: List[str],
         protected_conflicts: List[str],
-        operations: List[Dict[str, Any]]
+        operations: List[Dict[str, Any]],
+        detected_topics: Optional[Dict[str, int]] = None,
+        new_folders_proposed: int = 0,
+        existing_folders_reused: int = 0,
+        unclassified_files: int = 0,
     ) -> None:
         """Persist a complete organization plan and its operations in one transaction."""
         import json
@@ -335,8 +339,10 @@ class OrganizationRepository:
             conn.execute(
                 """
                 INSERT INTO organization_plans (
-                    id, scan_id, objective, created_at, warnings, protected_conflicts
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    id, scan_id, objective, created_at, warnings, protected_conflicts,
+                    detected_topics, new_folders_proposed, existing_folders_reused,
+                    unclassified_files
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     plan_id,
@@ -344,7 +350,11 @@ class OrganizationRepository:
                     objective,
                     created_at,
                     json.dumps(warnings),
-                    json.dumps(protected_conflicts)
+                    json.dumps(protected_conflicts),
+                    json.dumps(detected_topics or {}),
+                    new_folders_proposed,
+                    existing_folders_reused,
+                    unclassified_files,
                 )
             )
 
@@ -356,15 +366,19 @@ class OrganizationRepository:
                         op["source"],
                         op["destination"],
                         op.get("reason"),
-                        op["confidence"]
+                        op["confidence"],
+                        op.get("explanation"),
+                        op.get("topic"),
+                        op.get("folder_exists"),
                     )
                     for op in operations
                 ]
                 conn.executemany(
                     """
                     INSERT INTO organization_operations (
-                        plan_id, type, source, destination, reason, confidence
-                    ) VALUES (?, ?, ?, ?, ?, ?)
+                        plan_id, type, source, destination, reason, confidence,
+                        explanation, topic, folder_exists
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     op_records
                 )
@@ -418,11 +432,17 @@ class OrganizationRepository:
             plan_row = cursor.fetchone()
             if not plan_row:
                 return None
-            
+
             plan_dict = dict(plan_row)
             plan_dict["plan_id"] = plan_dict.pop("id")
             plan_dict["warnings"] = json.loads(plan_dict["warnings"])
             plan_dict["protected_conflicts"] = json.loads(plan_dict["protected_conflicts"])
+            # New summary fields (may be absent in older DB rows)
+            raw_topics = plan_dict.get("detected_topics") or "{}"
+            plan_dict["detected_topics"] = json.loads(raw_topics) if isinstance(raw_topics, str) else raw_topics
+            plan_dict["new_folders_proposed"] = plan_dict.get("new_folders_proposed") or 0
+            plan_dict["existing_folders_reused"] = plan_dict.get("existing_folders_reused") or 0
+            plan_dict["unclassified_files"] = plan_dict.get("unclassified_files") or 0
 
             op_cursor = conn.execute(
                 "SELECT * FROM organization_operations WHERE plan_id = ?", (plan_id,)

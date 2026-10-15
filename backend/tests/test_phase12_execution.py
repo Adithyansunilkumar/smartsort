@@ -78,9 +78,9 @@ def _persist_scan_and_plan(root: Path, service: FolderAccessService):
         warnings=[],
         protected_conflicts=[],
         operations=[
-            {"type": "MOVE", "source": "source.txt", "destination": "moved.txt", "confidence": "HIGH"},
-            {"type": "CREATE_FOLDER", "source": "new_folder", "destination": "new_folder", "confidence": "HIGH"},
-            {"type": "RENAME", "source": "dir1", "destination": "dir2", "confidence": "HIGH"},
+            {"type": "MOVE", "source": "source.txt", "destination": "SmartSort_Organized/moved.txt", "confidence": "HIGH"},
+            {"type": "CREATE_FOLDER", "source": "new_folder", "destination": "SmartSort_Organized/new_folder", "confidence": "HIGH"},
+            {"type": "RENAME", "source": "dir1", "destination": "SmartSort_Organized/dir2", "confidence": "HIGH"},
         ]
     )
     
@@ -99,11 +99,13 @@ class TestExecutionValidation:
         resp = client.post(f"/api/plans/{plan_id}/execute", json={"operation_ids": [op_move]})
         assert resp.status_code == 200
         
-        # Verify file actually moved
-        assert not (authorized_root / "source.txt").exists()
-        assert (authorized_root / "moved.txt").exists()
-        
         status = ExecutionRepository.get_operation_execution(op_move)
+        print(f"Status: {status.status}, Error: {status.error_code} - {status.error_message}")
+        
+        # Verify file was COPIED (originals preserved)
+        assert (authorized_root / "source.txt").exists()
+        assert (authorized_root / "SmartSort_Organized" / "moved.txt").exists()
+        
         assert status.status == ExecutionStatus.COMPLETED
 
     def test_unapproved_skipped(self, authorized_root, clean_service):
@@ -126,8 +128,10 @@ class TestExecutionValidation:
         op_move = op_ids[0]
         ApprovalRepository.record_decision(op_move, plan_id, ApprovalDecision.APPROVED, None)
         
-        # Create conflict
-        (authorized_root / "moved.txt").write_bytes(b"conflict")
+        # Create conflict inside the organized folder
+        org_folder = authorized_root / "SmartSort_Organized"
+        org_folder.mkdir(exist_ok=True)
+        (org_folder / "moved.txt").write_bytes(b"conflict")
         
         resp = client.post(f"/api/plans/{plan_id}/execute", json={"operation_ids": [op_move]})
         assert resp.status_code == 200
@@ -178,7 +182,7 @@ class TestExecutionValidation:
         resp = client.post(f"/api/plans/{plan_id}/execute", json={"operation_ids": [op_create]})
         assert resp.status_code == 200
         
-        assert (authorized_root / "new_folder").is_dir()
+        assert (authorized_root / "SmartSort_Organized" / "new_folder").is_dir()
         
         status = ExecutionRepository.get_operation_execution(op_create)
         assert status.status == ExecutionStatus.COMPLETED
@@ -191,8 +195,9 @@ class TestExecutionValidation:
         resp = client.post(f"/api/plans/{plan_id}/execute", json={"operation_ids": [op_rename]})
         assert resp.status_code == 200
         
-        assert not (authorized_root / "dir1").exists()
-        assert (authorized_root / "dir2").is_dir()
+        # Rename behaves as copy for directories as well
+        assert (authorized_root / "dir1").exists()
+        assert (authorized_root / "SmartSort_Organized" / "dir2").is_dir()
         
         status = ExecutionRepository.get_operation_execution(op_rename)
         assert status.status == ExecutionStatus.COMPLETED

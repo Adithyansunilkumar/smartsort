@@ -119,7 +119,12 @@ def _build_operation_with_approval(
                 if parent_path == ".":
                     parent_path = ""
                 
-                if plan_creates is not None and parent_path in plan_creates:
+                # Allow paths inside SmartSort_Organized (the output folder may not exist yet)
+                dest_norm = destination.replace("\\", "/")
+                if (dest_norm == "SmartSort_Organized" or
+                        dest_norm.startswith("SmartSort_Organized/")):
+                    is_handled = True
+                elif plan_creates is not None and parent_path in plan_creates:
                     create_op = plan_creates[parent_path]
                     create_decision = create_op.get("approval_decision", "PENDING")
                     if create_decision == "REJECTED":
@@ -128,7 +133,7 @@ def _build_operation_with_approval(
                     else:
                         is_handled = True
             
-            if not is_handled:
+            if not is_handled and is_eligible:
                 is_eligible = False
                 ineligibility_reason = f"Destination path failed security validation: {exc}"
 

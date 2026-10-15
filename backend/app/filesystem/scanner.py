@@ -201,6 +201,20 @@ def _scan_directory(
         rel_posix = _to_relative_posix(entry_path, root)
 
         # ------------------------------------------------------------------
+        # 0. Skip SmartSort_Organized at the root level — organized output
+        #    must never be re-scanned as a source for organization.
+        # ------------------------------------------------------------------
+        if entry.name == "SmartSort_Organized" and entry_path.parent == root:
+            skips_out.append(
+                ScanSkip(
+                    relative_path=rel_posix,
+                    reason="EXCLUDED",
+                    detail="SmartSort_Organized is excluded from source scans",
+                )
+            )
+            continue
+
+        # ------------------------------------------------------------------
         # 1. Symlink check — must come BEFORE is_dir / is_file checks.
         #    is_symlink() never follows the link, so this is safe.
         # ------------------------------------------------------------------

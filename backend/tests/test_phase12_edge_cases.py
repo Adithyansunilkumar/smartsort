@@ -179,14 +179,15 @@ class TestExecutionLifecycle:
         
         resp1 = client.post(f"/api/plans/{plan_id}/execute", json={"operation_ids": [op_id]})
         assert (authorized_root / "dest.txt").exists()
-        assert not (authorized_root / "source.txt").exists()
+        # Source is PRESERVED because execution uses copy semantics (originals kept safe)
+        assert (authorized_root / "source.txt").exists()
         
-        # Delete destination to prove it doesn't run again
+        # Delete destination to prove the operation doesn't run again once COMPLETED
         (authorized_root / "dest.txt").unlink()
         
         resp2 = client.post(f"/api/plans/{plan_id}/execute", json={"operation_ids": [op_id]})
         
-        # Still deleted, didn't run
+        # Still deleted, operation was already COMPLETED so it doesn't repeat
         assert not (authorized_root / "dest.txt").exists()
         status = ExecutionRepository.get_operation_execution(op_id)
         assert status.status == ExecutionStatus.COMPLETED

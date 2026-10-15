@@ -231,6 +231,82 @@ export async function clearFolder(): Promise<FolderOperationResult> {
   }
 }
 
+/**
+ * Upload a folder's files and establish it as the authorized root on the backend.
+ */
+export async function uploadFolder(files: FileList | File[]): Promise<FolderOperationResult> {
+  try {
+    const formData = new FormData();
+    const relativePaths: string[] = [];
+
+    const fileList = Array.from(files);
+    if (fileList.length === 0) {
+      return { success: false, error: 'No files selected to upload.' };
+    }
+
+    for (const file of fileList) {
+      formData.append('files', file);
+      const relPath = file.webkitRelativePath || file.name;
+      relativePaths.push(relPath);
+    }
+    formData.append('relative_paths', JSON.stringify(relativePaths));
+
+    const response = await fetch(`${API_BASE_URL}/api/folder/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    const responseBody = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      const detail = responseBody?.detail;
+      const message = typeof detail === 'object' && detail?.message ? detail.message : (detail || `Upload failed (HTTP ${response.status})`);
+      return {
+        success: false,
+        error: message,
+        errorCode: typeof detail === 'object' ? detail?.code : undefined,
+      };
+    }
+
+    return {
+      success: true,
+      data: responseBody as SelectFolderResponse,
+    };
+  } catch (err: unknown) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Network error during folder upload',
+    };
+  }
+}
+
+/**
+ * Open native system directory picker dialog on the host machine.
+ */
+export async function browseNativeFolder(): Promise<{ success: boolean; path?: string; error?: string }> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/folder/browse`, {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+    });
+
+    if (!response.ok) {
+      return { success: false, error: `Failed to open directory dialog (HTTP ${response.status})` };
+    }
+
+    const data = await response.json();
+    if (data.status === 'success' && data.path) {
+      return { success: true, path: data.path };
+    }
+    return { success: false, error: data.message || 'No folder selected' };
+  } catch (err: unknown) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Error launching directory browser',
+    };
+  }
+}
+
 // ============================================================================
 // Phase 2 � Filesystem Scanner
 // ============================================================================
@@ -1170,6 +1246,99 @@ export async function verifyPlan(planId: string): Promise<VerificationResult> {
     return { success: false, error: err instanceof Error ? err.message : 'Network error' };
   }
 }
+
+// ============================================================================
+// Bulk Approval — Approve All / Reject All
+// ============================================================================
+
+export interface BulkDecisionResponse {
+  updated_count: number;
+  skipped_count: number;
+  plan_status: PlanApprovalStatus;
+  message: string;
+}
+
+export interface BulkDecisionResult {
+  success: boolean;
+  data?: BulkDecisionResponse;
+  error?: string;
+  errorCode?: string;
+}
+
+/** Approve all pending eligible operations in a plan at once. */
+export async function bulkApproveOperations(planId: string): Promise<BulkDecisionResult> {
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/plans/${planId}/approvals/bulk-approve`,
+      { method: 'POST', headers: { Accept: 'application/json' } }
+    );
+    const responseBody = await response.json().catch(() => null);
+    if (!response.ok) {
+      const detail = responseBody?.detail;
+      const msg = typeof detail === 'object' && detail?.message ? detail.message : typeof detail === 'string' ? detail : `HTTP ${response.status}`;
+      const code = typeof detail === 'object' && detail?.code ? detail.code : undefined;
+      return { success: false, error: msg, errorCode: code };
+    }
+    return { success: true, data: responseBody as BulkDecisionResponse };
+  } catch (err: unknown) {
+    return { success: false, error: err instanceof Error ? err.message : 'Network error' };
+  }
+}
+
+/** Reject all pending operations in a plan at once. */
+export async function bulkRejectOperations(planId: string): Promise<BulkDecisionResult> {
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/plans/${planId}/approvals/bulk-reject`,
+      { method: 'POST', headers: { Accept: 'application/json' } }
+    );
+    const responseBody = await response.json().catch(() => null);
+    if (!response.ok) {
+      const detail = responseBody?.detail;
+      const msg = typeof detail === 'object' && detail?.message ? detail.message : typeof detail === 'string' ? detail : `HTTP ${response.status}`;
+      const code = typeof detail === 'object' && detail?.code ? detail.code : undefined;
+      return { success: false, error: msg, errorCode: code };
+    }
+    return { success: true, data: responseBody as BulkDecisionResponse };
+  } catch (err: unknown) {
+    return { success: false, error: err instanceof Error ? err.message : 'Network error' };
+  }
+}
+
+// ============================================================================
+// Output Folder Info
+// ============================================================================
+
+export interface OutputFolderInfo {
+  output_folder_name: string;
+  output_folder_path: string | null;
+  exists: boolean;
+  root_path: string | null;
+}
+
+export interface OutputFolderResult {
+  success: boolean;
+  data?: OutputFolderInfo;
+  error?: string;
+}
+
+/** Get the SmartSort_Organized output folder path and existence status. */
+export async function getOutputFolder(): Promise<OutputFolderResult> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/output-folder`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    });
+    const responseBody = await response.json().catch(() => null);
+    if (!response.ok) {
+      return { success: false, error: `HTTP ${response.status}` };
+    }
+    return { success: true, data: responseBody as OutputFolderInfo };
+  } catch (err: unknown) {
+    return { success: false, error: err instanceof Error ? err.message : 'Network error' };
+  }
+}
+
 
 
 

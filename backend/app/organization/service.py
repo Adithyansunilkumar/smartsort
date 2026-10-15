@@ -43,8 +43,26 @@ def generate_organization_plan(
         )
         files_data = [dict(row) for row in cursor.fetchall()]
 
-    if not files_data:
-        raise ValueError(f"No files found for scan '{scan_id}'.")
+    # If scan has files but analysis was not yet run, attempt analysis first
+    if files_data and any(f.get("category") is None for f in files_data):
+        try:
+            from app.analysis.service import analyze_scan_files
+            analyze_scan_files(scan_id, folder_service)
+            with get_connection() as conn:
+                cursor = conn.execute(
+                    """
+                    SELECT f.*, a.*, 
+                           f.path as relative_path, 
+                           f.name as name
+                    FROM files f
+                    LEFT JOIN file_analysis a ON f.id = a.file_id
+                    WHERE f.scan_id = ?
+                    """,
+                    (scan_id,)
+                )
+                files_data = [dict(row) for row in cursor.fetchall()]
+        except Exception:
+            pass
 
     # 3. Setup services
     protected_service = ProtectedPathService(folder_service)
@@ -69,7 +87,11 @@ def generate_organization_plan(
         created_at=plan.created_at,
         warnings=plan.warnings,
         protected_conflicts=plan.protected_conflicts,
-        operations=op_dicts
+        operations=op_dicts,
+        detected_topics=plan.detected_topics,
+        new_folders_proposed=plan.new_folders_proposed,
+        existing_folders_reused=plan.existing_folders_reused,
+        unclassified_files=plan.unclassified_files,
     )
 
     return plan

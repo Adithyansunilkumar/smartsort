@@ -10,6 +10,9 @@ POST /api/scan
   → 200  ScanResult (status "completed" or "failed")
   → 409  {"code": "ROOT_NOT_CONFIGURED", "message": "..."}  — no root set
   → 500  {"code": "SCAN_ERROR", "message": "..."}  — unexpected failure
+
+The SmartSort_Organized folder is always excluded from scans so that
+already-organized output is never treated as a new source for organization.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status

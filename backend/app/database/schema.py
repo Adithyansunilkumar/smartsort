@@ -187,6 +187,33 @@ def init_db(db_path: Optional[Path] = None) -> None:
                 """
             )
 
+            # Migrations for Phase 8 organization_operations (content-aware fields)
+            for _col, _default in [
+                ("explanation", "NULL"),
+                ("topic", "NULL"),
+                ("folder_exists", "NULL"),
+            ]:
+                try:
+                    conn.execute(
+                        f"ALTER TABLE organization_operations ADD COLUMN {_col} TEXT DEFAULT {_default}"
+                    )
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
+
+            # Migrations for Phase 8 organization_plans (summary fields)
+            for _col, _default in [
+                ("detected_topics", "'{}'"),
+                ("new_folders_proposed", "0"),
+                ("existing_folders_reused", "0"),
+                ("unclassified_files", "0"),
+            ]:
+                try:
+                    conn.execute(
+                        f"ALTER TABLE organization_plans ADD COLUMN {_col} TEXT DEFAULT {_default}"
+                    )
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
+
             # Indexes for Phase 8
             conn.execute("CREATE INDEX IF NOT EXISTS idx_org_operations_plan_id ON organization_operations(plan_id)")
 

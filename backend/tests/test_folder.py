@@ -187,3 +187,41 @@ def test_validate_path_in_root_unconfigured():
     with pytest.raises(PathSecurityError) as exc_info:
         validate_path_in_root("some/path", None)  # type: ignore
     assert exc_info.value.code == "ROOT_NOT_CONFIGURED"
+
+
+def test_upload_folder():
+    """Verify POST /api/folder/upload saves files and sets authorized root."""
+    import io
+    response = client.post(
+        "/api/folder/upload",
+        files=[
+            ("files", ("doc1.txt", io.BytesIO(b"content 1"), "text/plain")),
+            ("files", ("sub/doc2.txt", io.BytesIO(b"content 2"), "text/plain")),
+        ],
+        data={"relative_paths": '["my_project/doc1.txt", "my_project/sub/doc2.txt"]'},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert "my_project" in data["authorized_root"]
+    assert Path(data["authorized_root"]).is_dir()
+    assert (Path(data["authorized_root"]) / "doc1.txt").exists()
+    assert (Path(data["authorized_root"]) / "sub" / "doc2.txt").exists()
+
+
+def test_upload_folder_empty():
+    """Verify POST /api/folder/upload rejects empty payload."""
+    response = client.post("/api/folder/upload", files=[])
+    assert response.status_code == 422 or response.status_code == 400
+
+
+def test_browse_folder_endpoint(monkeypatch, tmp_path):
+    """Verify POST /api/folder/browse responds with expected schema."""
+    monkeypatch.setattr("app.api.folder._show_native_directory_dialog", lambda: str(tmp_path))
+    response = client.post("/api/folder/browse")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["path"] == str(tmp_path.resolve())
+
+

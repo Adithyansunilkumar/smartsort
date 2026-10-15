@@ -10,6 +10,7 @@ router = APIRouter(prefix="/api/analyze", tags=["analysis"])
 
 
 @router.post("/{scan_id}", response_model=AnalysisSummary)
+@router.get("/{scan_id}", response_model=AnalysisSummary)
 def start_analysis(
     scan_id: str,
     folder_service: FolderAccessService = Depends(get_folder_access_service),

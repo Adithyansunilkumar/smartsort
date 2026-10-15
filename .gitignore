@@ -66,3 +66,6 @@ backend/data/
 *.db-wal
 *.db-shm
 
+# Uploads / Temp
+*uploaded_folders/
+SmartSort_Organized/

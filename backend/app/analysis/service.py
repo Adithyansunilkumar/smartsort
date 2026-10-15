@@ -26,9 +26,14 @@ def analyze_scan_files(scan_id: str, folder_service: FolderAccessService) -> Ana
     
     folder_service.require_authorized_root()
     
+    with get_connection() as conn:
+        cursor = conn.execute("SELECT 1 FROM scans WHERE id = ?", (scan_id,))
+        if not cursor.fetchone():
+            raise ValueError(f"Scan '{scan_id}' not found.")
+        
     files_data = ScanRepository.get_files_by_scan_id(scan_id)
     if not files_data:
-        raise ValueError(f"Scan '{scan_id}' not found or contains no files.")
+        return AnalysisSummary(scan_id=scan_id)
         
     # Get existing content extractions and analysis records
     content_extractions = ContentRepository.get_extraction_results_for_scan(scan_id)
